@@ -211,16 +211,21 @@ async def fetch_scb(
     url = f"{SCB_API}/{indicator.source_identifier.strip('/')}"
 
     response = await client.post(
-        url,
-        json=indicator.source_filter,
-        timeout=120,
-    )
-    response.raise_for_status()
+    url,
+    json=indicator.source_filter,
+    timeout=120,
+)
 
-    return normalize_scb(
-        parse_jsonstat2(response.json()),
-        indicator,
+if response.is_error:
+    raise RuntimeError(
+        f"SCB svarade {response.status_code} för {url}: "
+        f"{response.text}"
     )
+
+return normalize_scb(
+    parse_jsonstat2(response.json()),
+    indicator,
+)
 
 
 async def fetch_kolada(
