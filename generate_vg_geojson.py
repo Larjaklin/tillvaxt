@@ -61,64 +61,59 @@ VG_CODES = {
 
 
 def main() -> None:
+    import importlib
+    import pkgutil
+
     import swemaps
 
-    geojson = swemaps.GeoJSONMaps().municipalities()
-    selected_features = []
+    print("Swemaps finns i:", swemaps.__file__)
 
-    for feature in geojson["features"]:
-        properties = feature.get("properties", {})
+    public_names = [
+        name
+        for name in dir(swemaps)
+        if not name.startswith("_")
+    ]
 
-        municipality_code = str(
-            properties.get("kommunkod")
-            or properties.get("KnKod")
-            or properties.get("code")
-            or ""
-        )[-4:]
+    print("Publika namn i swemaps:", public_names)
 
-        if municipality_code not in VG_CODES:
-            continue
+    if hasattr(swemaps, "__path__"):
+        submodules = [
+            module.name
+            for module in pkgutil.iter_modules(
+                swemaps.__path__
+            )
+        ]
+    else:
+        submodules = []
 
-        properties.setdefault(
-            "kommunkod",
-            municipality_code,
-        )
+    print("Undermoduler i swemaps:", submodules)
 
-        properties.setdefault(
-            "kommunnamn",
-            properties.get("name")
-            or properties.get("KnNamn")
-            or municipality_code,
-        )
+    for submodule_name in submodules:
+        full_name = f"swemaps.{submodule_name}"
 
-        selected_features.append(feature)
+        try:
+            module = importlib.import_module(full_name)
 
-    result = {
-        "type": "FeatureCollection",
-        "features": selected_features,
-    }
+            names = [
+                name
+                for name in dir(module)
+                if not name.startswith("_")
+            ]
 
-    output_path = Path("vg_municipalities.geojson")
+            print(
+                f"Publika namn i {full_name}:",
+                names,
+            )
+        except Exception as error:
+            print(
+                f"Kunde inte läsa {full_name}:",
+                repr(error),
+            )
 
-    output_path.write_text(
-        json.dumps(
-            result,
-            ensure_ascii=False,
-        ),
-        encoding="utf-8",
+    raise RuntimeError(
+        "Diagnostik klar. Se GitHub Actions-loggen "
+        "för swemaps API."
     )
-
-    print(
-        f"Skrev {len(selected_features)} kommuner "
-        f"till {output_path}"
-    )
-
-    if len(selected_features) != 49:
-        raise RuntimeError(
-            "Förväntade 49 kommuner men fick "
-            f"{len(selected_features)}."
-        )
-
-
+    
 if __name__ == "__main__":
     main()
