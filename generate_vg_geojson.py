@@ -11,6 +11,8 @@ import pyarrow as pa
 import pyarrow.compute as pc
 import pyarrow.parquet as pq
 import swemaps
+from shapely import from_wkb
+from shapely.geometry import mapping
 
 
 VG_CODES = {
@@ -126,39 +128,66 @@ def main() -> None:
             + ", ".join(missing_codes)
         )
 
-    geojson = swemaps.table_to_geojson(
-        vg_table
+        municipality_codes = (
+        vg_table["kommun_kod"].to_pylist()
     )
 
-    features = geojson.get("features", [])
+    municipality_names = (
+        vg_table["kommun"].to_pylist()
+    )
+
+    geometry_values = (
+        vg_table["geometry"].to_pylist()
+    )
+
+    features = []
+
+    for (
+        municipality_code,
+        municipality_name,
+        geometry_value,
+    ) in zip(
+        municipality_codes,
+        municipality_names,
+        geometry_values,
+        strict=True,
+    ):
+        if geometry_value is None:
+            raise RuntimeError(
+                "Kommunen "
+                f"{municipality_code} saknar geometri."
+            )
+
+        geometry = from_wkb(
+            bytes(geometry_value)
+        )
+
+        feature = {
+            "type": "Feature",
+            "properties": {
+                "kommun_kod": str(
+                    municipality_code
+                ),
+                "kommun": str(
+                    municipality_name
+                ),
+                "kommunkod": str(
+                    municipality_code
+                )[-4:],
+                "kommunnamn": str(
+                    municipality_name
+                ),
+            },
+            "geometry": mapping(geometry),
+        }
+
+        features.append(feature)
 
     if len(features) != 49:
         raise RuntimeError(
             "GeoJSON-konverteringen gav "
-            f"{len(features)} objekt i stället för 49."
-        )
-
-    for feature in features:
-        properties = feature.setdefault(
-            "properties",
-            {},
-        )
-
-        municipality_code = str(
-            properties.get("kommun_kod", "")
-        )[-4:]
-
-        municipality_name = (
-            properties.get("kommun")
-            or municipality_code
-        )
-
-        properties["kommunkod"] = (
-            municipality_code
-        )
-
-        properties["kommunnamn"] = (
-            municipality_name
+            f"{len(features)} objekt "
+            "i stället för 49."
         )
 
     output = {
