@@ -73,7 +73,9 @@ def main() -> None:
 
     print(f"Läser kommunkarta från {map_path}")
 
-    municipality_table = pq.read_table(map_path)
+    municipality_table = pq.read_table(
+        map_path
+    )
 
     required_columns = {
         "kommun_kod",
@@ -88,7 +90,9 @@ def main() -> None:
     if missing_columns:
         raise RuntimeError(
             "Kommunkartan saknar förväntade kolumner: "
-            + ", ".join(sorted(missing_columns))
+            + ", ".join(
+                sorted(missing_columns)
+            )
         )
 
     selected_codes = pa.array(
@@ -111,11 +115,13 @@ def main() -> None:
     )
 
     if vg_table.num_rows != 49:
-        found_codes = sorted(
+        found_codes = {
             str(value)
-            for value in vg_table["kommun_kod"]
-            .to_pylist()
-        )
+            for value in (
+                vg_table["kommun_kod"]
+                .to_pylist()
+            )
+        }
 
         missing_codes = sorted(
             VG_CODES.difference(found_codes)
@@ -128,7 +134,7 @@ def main() -> None:
             + ", ".join(missing_codes)
         )
 
-        municipality_codes = (
+    municipality_codes = (
         vg_table["kommun_kod"].to_pylist()
     )
 
@@ -155,33 +161,36 @@ def main() -> None:
         if geometry_value is None:
             raise RuntimeError(
                 "Kommunen "
-                f"{municipality_code} saknar geometri."
+                f"{municipality_code} "
+                "saknar geometri."
             )
 
         geometry = from_wkb(
             bytes(geometry_value)
         )
 
-        feature = {
-            "type": "Feature",
-            "properties": {
-                "kommun_kod": str(
-                    municipality_code
-                ),
-                "kommun": str(
-                    municipality_name
-                ),
-                "kommunkod": str(
-                    municipality_code
-                )[-4:],
-                "kommunnamn": str(
-                    municipality_name
-                ),
-            },
-            "geometry": mapping(geometry),
-        }
+        code = str(
+            municipality_code
+        )[-4:]
 
-        features.append(feature)
+        name = str(
+            municipality_name
+        )
+
+        features.append(
+            {
+                "type": "Feature",
+                "properties": {
+                    "kommun_kod": code,
+                    "kommun": name,
+                    "kommunkod": code,
+                    "kommunnamn": name,
+                },
+                "geometry": mapping(
+                    geometry
+                ),
+            }
+        )
 
     if len(features) != 49:
         raise RuntimeError(
