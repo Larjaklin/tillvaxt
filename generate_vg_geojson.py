@@ -1,11 +1,17 @@
 """Skapa Leaflet-kompatibel GeoJSON för Västra Götalands kommuner.
 
-Swemaps levererar koordinaterna som latitud och longitud. Ingen
-koordinatomvandling ska därför göras.
+Swemaps inbyggda kommunkarta används direkt. Ingen manuell
+koordinatomvandling ska göras.
 """
 
 import json
 from pathlib import Path
+
+import pyarrow as pa
+import pyarrow.compute as pc
+import pyarrow.parquet as pq
+import swemaps
+
 
 VG_CODES = {
     "1401",
@@ -61,53 +67,121 @@ VG_CODES = {
 
 
 def main() -> None:
-    import inspect
-    from typing import get_args
+    map_path = swemaps.get_path("kommun")
 
-    import swemaps
-    from swemaps import utils
+    print(f"Läser kommunkarta från {map_path}")
 
-    print("Swemaps finns i:", swemaps.__file__)
+    municipality_table = pq.read_table(map_path)
 
-    functions = [
-        ("swemaps.fetch_map", swemaps.fetch_map),
-        ("swemaps.get_path", swemaps.get_path),
-        (
-            "swemaps.table_to_geojson",
-            swemaps.table_to_geojson,
+    required_columns = {
+        "kommun_kod",
+        "kommun",
+        "geometry",
+    }
+
+    missing_columns = required_columns.difference(
+        municipality_table.column_names
+    )
+
+    if missing_columns:
+        raise RuntimeError(
+            "Kommunkartan saknar förväntade kolumner: "
+            + ", ".join(sorted(missing_columns))
+        )
+
+    selected_codes = pa.array(
+        sorted(VG_CODES),
+        type=pa.string(),
+    )
+
+    selected_rows = pc.is_in(
+        municipality_table["kommun_kod"],
+        value_set=selected_codes,
+    )
+
+    vg_table = municipality_table.filter(
+        selected_rows
+    )
+
+    print(
+        f"Valde {vg_table.num_rows} kommuner "
+        "från kommunkartan"
+    )
+
+    if vg_table.num_rows != 49:
+        found_codes = sorted(
+            str(value)
+            for value in vg_table["kommun_kod"]
+            .to_pylist()
+        )
+
+        missing_codes = sorted(
+            VG_CODES.difference(found_codes)
+        )
+
+        raise RuntimeError(
+            "Förväntade 49 kommuner men fick "
+            f"{vg_table.num_rows}. "
+            "Saknade koder: "
+            + ", ".join(missing_codes)
+        )
+
+    geojson = swemaps.table_to_geojson(
+        vg_table
+    )
+
+    features = geojson.get("features", [])
+
+    if len(features) != 49:
+        raise RuntimeError(
+            "GeoJSON-konverteringen gav "
+            f"{len(features)} objekt i stället för 49."
+        )
+
+    for feature in features:
+        properties = feature.setdefault(
+            "properties",
+            {},
+        )
+
+        municipality_code = str(
+            properties.get("kommun_kod", "")
+        )[-4:]
+
+        municipality_name = (
+            properties.get("kommun")
+            or municipality_code
+        )
+
+        properties["kommunkod"] = (
+            municipality_code
+        )
+
+        properties["kommunnamn"] = (
+            municipality_name
+        )
+
+    output = {
+        "type": "FeatureCollection",
+        "features": features,
+    }
+
+    output_path = Path(
+        "vg_municipalities.geojson"
+    )
+
+    output_path.write_text(
+        json.dumps(
+            output,
+            ensure_ascii=False,
+            separators=(",", ":"),
         ),
-    ]
-
-    for name, function in functions:
-        print()
-        print("=" * 70)
-        print("Funktion:", name)
-        print("Signatur:", inspect.signature(function))
-        print("Dokumentation:", inspect.getdoc(function))
-
-        try:
-            print("Källkod:")
-            print(inspect.getsource(function))
-        except Exception as error:
-            print(
-                "Kunde inte läsa källkoden:",
-                repr(error),
-            )
-
-    print()
-    print("=" * 70)
-    print(
-        "BuiltinMap-värden:",
-        get_args(utils.BuiltinMap),
-    )
-    print(
-        "ExtraMap-värden:",
-        get_args(utils.ExtraMap),
+        encoding="utf-8",
     )
 
-    raise RuntimeError(
-        "API-diagnostik klar. Kopiera resultatet "
-        "från GitHub Actions."
+    print(
+        f"Skrev {len(features)} kommuner "
+        f"till {output_path}"
     )
 
 
