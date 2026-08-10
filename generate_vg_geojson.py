@@ -61,59 +61,55 @@ VG_CODES = {
 
 
 def main() -> None:
-    import importlib
-    import pkgutil
+    import inspect
+    from typing import get_args
 
     import swemaps
+    from swemaps import utils
 
     print("Swemaps finns i:", swemaps.__file__)
 
-    public_names = [
-        name
-        for name in dir(swemaps)
-        if not name.startswith("_")
+    functions = [
+        ("swemaps.fetch_map", swemaps.fetch_map),
+        ("swemaps.get_path", swemaps.get_path),
+        (
+            "swemaps.table_to_geojson",
+            swemaps.table_to_geojson,
+        ),
     ]
 
-    print("Publika namn i swemaps:", public_names)
-
-    if hasattr(swemaps, "__path__"):
-        submodules = [
-            module.name
-            for module in pkgutil.iter_modules(
-                swemaps.__path__
-            )
-        ]
-    else:
-        submodules = []
-
-    print("Undermoduler i swemaps:", submodules)
-
-    for submodule_name in submodules:
-        full_name = f"swemaps.{submodule_name}"
+    for name, function in functions:
+        print()
+        print("=" * 70)
+        print("Funktion:", name)
+        print("Signatur:", inspect.signature(function))
+        print("Dokumentation:", inspect.getdoc(function))
 
         try:
-            module = importlib.import_module(full_name)
-
-            names = [
-                name
-                for name in dir(module)
-                if not name.startswith("_")
-            ]
-
-            print(
-                f"Publika namn i {full_name}:",
-                names,
-            )
+            print("Källkod:")
+            print(inspect.getsource(function))
         except Exception as error:
             print(
-                f"Kunde inte läsa {full_name}:",
+                "Kunde inte läsa källkoden:",
                 repr(error),
             )
 
-    raise RuntimeError(
-        "Diagnostik klar. Se GitHub Actions-loggen "
-        "för swemaps API."
+    print()
+    print("=" * 70)
+    print(
+        "BuiltinMap-värden:",
+        get_args(utils.BuiltinMap),
     )
-    
+    print(
+        "ExtraMap-värden:",
+        get_args(utils.ExtraMap),
+    )
+
+    raise RuntimeError(
+        "API-diagnostik klar. Kopiera resultatet "
+        "från GitHub Actions."
+    )
+
+
 if __name__ == "__main__":
     main()
