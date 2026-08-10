@@ -19,7 +19,7 @@ jobs:
         with:
           python-version: '3.12'
 
-        - name: Install map dependencies
+      - name: Install map dependencies
         run: |
           pip install 'swemaps==0.2.2'
           pip install pyarrow
@@ -40,7 +40,9 @@ jobs:
           features = data.get("features", [])
 
           if data.get("type") != "FeatureCollection":
-              raise SystemExit("GeoJSON är inte en FeatureCollection")
+              raise SystemExit(
+                  "GeoJSON är inte en FeatureCollection"
+              )
 
           if len(features) != 49:
               raise SystemExit(
