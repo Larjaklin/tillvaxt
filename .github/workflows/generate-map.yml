@@ -19,8 +19,11 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install swemaps
-        run: pip install 'swemaps==0.2.2'
+        - name: Install map dependencies
+        run: |
+          pip install 'swemaps==0.2.2'
+          pip install pyarrow
+          pip install geoarrow-rust-io
 
       - name: Generate GeoJSON
         run: python generate_vg_geojson.py
