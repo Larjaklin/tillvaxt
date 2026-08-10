@@ -23,7 +23,7 @@ jobs:
         run: |
           pip install 'swemaps==0.2.2'
           pip install pyarrow
-          pip install geoarrow-rust-io
+          pip install shapely
 
       - name: Generate GeoJSON
         run: python generate_vg_geojson.py
