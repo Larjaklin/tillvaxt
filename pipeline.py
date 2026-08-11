@@ -293,8 +293,9 @@ def normalize_scb(
 
         # Kommuner har fyrsiffriga koder.
         # Tvåsiffriga koder representerar län.
-        if (
-            len(municipality_code) != 4
+               if (
+            len(municipality_code)
+            not in {2, 4}
             or not municipality_code.isdigit()
         ):
             continue
