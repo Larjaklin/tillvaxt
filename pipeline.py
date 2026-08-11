@@ -243,18 +243,20 @@ def parse_jsonstat2(
 
     return rows
 
-
 def normalize_scb(
     rows: Iterable[
         dict[str, Any]
     ],
     indicator: Indicator,
 ) -> list[dict[str, Any]]:
-    """Normalisera SCB-rader för konfigurerade kommuner.
+    """Normalisera SCB-rader för konfigurerade områden.
 
-    Vilka kommuner som hämtas styrs av source_filter i
-    indicator_config. Alla fyrsiffriga kommunregioner accepteras.
-    Tvåsiffriga länskoder filtreras bort.
+    Vilka områden som hämtas styrs av source_filter i
+    indicator_config.
+
+    Tvåsiffriga regionkoder behandlas som län.
+    Fyrsiffriga regionkoder behandlas som kommuner.
+    Övriga regionnivåer filtreras bort.
     """
 
     normalized_rows: list[
@@ -291,9 +293,7 @@ def normalize_scb(
             )
         )
 
-        # Kommuner har fyrsiffriga koder.
-        # Tvåsiffriga koder representerar län.
-               if (
+        if (
             len(municipality_code)
             not in {2, 4}
             or not municipality_code.isdigit()
@@ -344,7 +344,8 @@ def normalize_scb(
                     )[:4]
                 ),
 
-                "source": "SCB",
+                "source":
+                    "SCB",
 
                 "indicator_name":
                     indicator.short_name,
@@ -369,7 +370,6 @@ def normalize_scb(
         )
 
     return normalized_rows
-
 
 async def fetch_scb(
     client: httpx.AsyncClient,
