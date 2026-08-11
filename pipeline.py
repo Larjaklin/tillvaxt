@@ -1,29 +1,50 @@
-"""Monthly, configuration-driven regional statistics pipeline for Tillväxt VG.
+"""Månatlig, konfigurationsstyrd statistikpipeline för Tillväxt VG.
 
-Reads active rows from indicator_config, fetches SCB/Kolada/AF data, normalizes rows to
-regional_statistics and upserts on (municipality_code, indicator_name, year, industry, sex).
+Läser aktiva indikatorer från indicator_config, hämtar data från SCB eller
+Kolada, normaliserar raderna och gör upsert till regional_statistics.
 """
+
 from __future__ import annotations
 
+import asyncio
 import itertools
 import logging
 import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Iterable
+from typing import Any, Iterable, Iterator
 
 import httpx
 from supabase import create_client
 
-LOG = logging.getLogger("tillvaxt.pipeline")
-logging.basicConfig(
-    level=os.getenv("LOG_LEVEL", "INFO"),
-    format="%(asctime)s %(levelname)s %(message)s",
+
+LOG = logging.getLogger(
+    "tillvaxt.pipeline"
 )
 
-SCB_API = "https://api.scb.se/OV0104/v1/doris/sv/ssd/START"
-KOLADA_API = "https://api.kolada.se/v2"
+logging.basicConfig(
+    level=os.getenv(
+        "LOG_LEVEL",
+        "INFO",
+    ),
+    format=(
+        "%(asctime)s "
+        "%(levelname)s "
+        "%(message)s"
+    ),
+)
+
+SCB_API = (
+    "https://api.scb.se/"
+    "OV0104/v1/doris/sv/ssd/START"
+)
+
+KOLADA_API = (
+    "https://api.kolada.se/v2"
+)
+
 PAGE_SIZE = 1000
+
 
 VG_MUNICIPALITIES = {
     "1401": "Härryda",
@@ -85,116 +106,264 @@ class Indicator:
     source: str
     unit: str
     source_identifier: str
-    source_filter: dict[str, Any] | None
+    source_filter: (
+        dict[str, Any] | None
+    )
 
 
-def ordered_category_codes(dimension: dict[str, Any]) -> list[str]:
-    category = dimension.get("category", {})
-    index = category.get("index", {})
+def ordered_category_codes(
+    dimension: dict[str, Any],
+) -> list[str]:
+    """Returnera dimensionskoder i JSON-stat2-ordning."""
+
+    category = dimension.get(
+        "category",
+        {},
+    )
+
+    index = category.get(
+        "index",
+        {},
+    )
 
     if isinstance(index, list):
-        labels = category.get("label", {})
-        return sorted(
-            labels,
-            key=lambda code: index.index(code) if code in index else 10**9,
-        )
+        return [
+            str(code)
+            for code in index
+        ]
 
-    return sorted(index.keys(), key=lambda code: index[code])
+    if isinstance(index, dict):
+        return [
+            str(code)
+            for code in sorted(
+                index,
+                key=lambda code:
+                    index[code],
+            )
+        ]
+
+    return []
 
 
-def parse_jsonstat2(payload: dict[str, Any]) -> list[dict[str, Any]]:
-    """Expand JSON-stat2's flat value array into dimension rows."""
-    dimension_ids = payload.get("id") or []
-    dimensions = payload.get("dimension") or {}
-    values = payload.get("value") or []
+def parse_jsonstat2(
+    payload: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Packa upp JSON-stat2 till en rad per dimensionskombination."""
 
-    if not dimension_ids or not dimensions:
+    dimension_ids = (
+        payload.get("id")
+        or []
+    )
+
+    dimensions = (
+        payload.get("dimension")
+        or {}
+    )
+
+    values = (
+        payload.get("value")
+        or []
+    )
+
+    if (
+        not dimension_ids
+        or not dimensions
+    ):
         return []
 
     codes_by_dimension = [
-        ordered_category_codes(dimensions[dimension_id])
-        for dimension_id in dimension_ids
+        ordered_category_codes(
+            dimensions[dimension_id]
+        )
+        for dimension_id
+        in dimension_ids
     ]
+
+    if any(
+        not codes
+        for codes
+        in codes_by_dimension
+    ):
+        return []
 
     labels_by_dimension = {
         dimension_id: (
-            dimensions.get(dimension_id, {})
+            dimensions
+            .get(dimension_id, {})
             .get("category", {})
             .get("label", {})
             or {}
         )
-        for dimension_id in dimension_ids
+        for dimension_id
+        in dimension_ids
     }
 
-    rows: list[dict[str, Any]] = []
+    rows: list[
+        dict[str, Any]
+    ] = []
 
-    for offset, combination in enumerate(
-        itertools.product(*codes_by_dimension)
-    ):
+    combinations = itertools.product(
+        *codes_by_dimension
+    )
+
+    for (
+        offset,
+        combination,
+    ) in enumerate(combinations):
         if offset >= len(values):
             break
 
         row = {
             dimension_id: {
                 "code": code,
-                "label": labels_by_dimension[dimension_id].get(code, code),
+                "label": (
+                    labels_by_dimension[
+                        dimension_id
+                    ].get(
+                        code,
+                        code,
+                    )
+                ),
             }
-            for dimension_id, code in zip(
+            for (
+                dimension_id,
+                code,
+            ) in zip(
                 dimension_ids,
                 combination,
+                strict=True,
             )
         }
-        row["value"] = values[offset]
+
+        row["value"] = (
+            values[offset]
+        )
+
         rows.append(row)
 
     return rows
 
 
 def normalize_scb(
-    rows: Iterable[dict[str, Any]],
+    rows: Iterable[
+        dict[str, Any]
+    ],
     indicator: Indicator,
 ) -> list[dict[str, Any]]:
-    normalized_rows = []
+    """Normalisera SCB-rader för konfigurerade kommuner.
+
+    Vilka kommuner som hämtas styrs av source_filter i
+    indicator_config. Alla fyrsiffriga kommunregioner accepteras.
+    Tvåsiffriga länskoder filtreras bort.
+    """
+
+    normalized_rows: list[
+        dict[str, Any]
+    ] = []
 
     for row in rows:
-        region = row.get("Region") or row.get("region")
-        year = row.get("Tid") or row.get("time") or row.get("År")
+        region = (
+            row.get("Region")
+            or row.get("region")
+        )
 
-        if not region or not year or row.get("value") is None:
+        year = (
+            row.get("Tid")
+            or row.get("time")
+            or row.get("År")
+        )
+
+        value = row.get(
+            "value"
+        )
+
+        if (
+            not region
+            or not year
+            or value is None
+        ):
             continue
 
-        municipality_code = str(region["code"])
+        municipality_code = str(
+            region.get(
+                "code",
+                "",
+            )
+        )
 
-        if municipality_code not in VG_MUNICIPALITIES:
+        # Kommuner har fyrsiffriga koder.
+        # Tvåsiffriga koder representerar län.
+        if (
+            len(municipality_code) != 4
+            or not municipality_code.isdigit()
+        ):
             continue
+
+        municipality_name = str(
+            region.get("label")
+            or VG_MUNICIPALITIES.get(
+                municipality_code
+            )
+            or municipality_code
+        )
 
         industry = (
             row.get("Naringsgren")
             or row.get("SNI")
-            or {"label": "alla"}
-        ).get("label", "alla")
+            or {
+                "label": "alla"
+            }
+        ).get(
+            "label",
+            "alla",
+        )
 
         sex = (
             row.get("Kon")
             or row.get("Kön")
-            or {"label": "totalt"}
-        ).get("label", "totalt")
+            or {
+                "label": "totalt"
+            }
+        ).get(
+            "label",
+            "totalt",
+        )
 
         normalized_rows.append(
             {
-                "municipality_code": municipality_code,
-                "municipality_name": VG_MUNICIPALITIES.get(
+                "municipality_code":
                     municipality_code,
-                    region.get("label", municipality_code),
+
+                "municipality_name":
+                    municipality_name,
+
+                "year": int(
+                    str(
+                        year["code"]
+                    )[:4]
                 ),
-                "year": int(str(year["code"])[:4]),
+
                 "source": "SCB",
-                "indicator_name": indicator.short_name,
-                "industry": industry,
-                "sex": sex,
-                "value": float(row["value"]),
-                "unit": indicator.unit,
-                "updated_at": datetime.now(timezone.utc).isoformat(),
+
+                "indicator_name":
+                    indicator.short_name,
+
+                "industry":
+                    industry,
+
+                "sex":
+                    sex,
+
+                "value":
+                    float(value),
+
+                "unit":
+                    indicator.unit,
+
+                "updated_at":
+                    datetime.now(
+                        timezone.utc
+                    ).isoformat(),
             }
         )
 
@@ -205,10 +374,18 @@ async def fetch_scb(
     client: httpx.AsyncClient,
     indicator: Indicator,
 ) -> list[dict[str, Any]]:
-    if not indicator.source_filter:
-        raise ValueError("SCB-indikator saknar source_filter")
+    """Hämta och normalisera en SCB-indikator."""
 
-    url = f"{SCB_API}/{indicator.source_identifier.strip('/')}"
+    if not indicator.source_filter:
+        raise ValueError(
+            "SCB-indikator saknar "
+            "source_filter"
+        )
+
+    url = (
+        f"{SCB_API}/"
+        f"{indicator.source_identifier.strip('/')}"
+    )
 
     response = await client.post(
         url,
@@ -218,12 +395,22 @@ async def fetch_scb(
 
     if response.is_error:
         raise RuntimeError(
-            f"SCB svarade {response.status_code} för {url}: "
+            f"SCB svarade "
+            f"{response.status_code} "
+            f"för {url}: "
             f"{response.text}"
         )
 
+    payload = response.json()
+
+    parsed_rows = (
+        parse_jsonstat2(
+            payload
+        )
+    )
+
     return normalize_scb(
-        parse_jsonstat2(response.json()),
+        parsed_rows,
         indicator,
     )
 
@@ -232,36 +419,86 @@ async def fetch_kolada(
     client: httpx.AsyncClient,
     indicator: Indicator,
 ) -> list[dict[str, Any]]:
-    normalized_rows = []
+    """Hämta Kolada sekventiellt för VG-kommunerna."""
 
-    for municipality_code, municipality_name in VG_MUNICIPALITIES.items():
+    normalized_rows: list[
+        dict[str, Any]
+    ] = []
+
+    for (
+        municipality_code,
+        municipality_name,
+    ) in VG_MUNICIPALITIES.items():
         url = (
             f"{KOLADA_API}/data/kpi/"
-            f"{indicator.source_identifier}/municipality/{municipality_code}"
+            f"{indicator.source_identifier}"
+            f"/municipality/"
+            f"{municipality_code}"
         )
 
-        response = await client.get(url, timeout=30)
+        response = await client.get(
+            url,
+            timeout=30,
+        )
+
         response.raise_for_status()
 
-        for item in response.json().get("values", []):
-            period = str(item.get("period", ""))[:4]
-            value = item.get("value")
+        payload = response.json()
 
-            if not period.isdigit() or value is None:
+        for item in payload.get(
+            "values",
+            [],
+        ):
+            period = str(
+                item.get(
+                    "period",
+                    "",
+                )
+            )[:4]
+
+            value = item.get(
+                "value"
+            )
+
+            if (
+                not period.isdigit()
+                or value is None
+            ):
                 continue
 
             normalized_rows.append(
                 {
-                    "municipality_code": municipality_code,
-                    "municipality_name": municipality_name,
-                    "year": int(period),
-                    "source": "Kolada",
-                    "indicator_name": indicator.short_name,
-                    "industry": "alla",
-                    "sex": "totalt",
-                    "value": float(value),
-                    "unit": indicator.unit,
-                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                    "municipality_code":
+                        municipality_code,
+
+                    "municipality_name":
+                        municipality_name,
+
+                    "year":
+                        int(period),
+
+                    "source":
+                        "Kolada",
+
+                    "indicator_name":
+                        indicator.short_name,
+
+                    "industry":
+                        "alla",
+
+                    "sex":
+                        "totalt",
+
+                    "value":
+                        float(value),
+
+                    "unit":
+                        indicator.unit,
+
+                    "updated_at":
+                        datetime.now(
+                            timezone.utc
+                        ).isoformat(),
                 }
             )
 
@@ -272,13 +509,23 @@ async def fetch_indicator(
     client: httpx.AsyncClient,
     indicator: Indicator,
 ) -> list[dict[str, Any]]:
-    source = indicator.source.lower()
+    """Skicka indikatorn till rätt datakälla."""
+
+    source = (
+        indicator.source.casefold()
+    )
 
     if source == "scb":
-        return await fetch_scb(client, indicator)
+        return await fetch_scb(
+            client,
+            indicator,
+        )
 
     if source == "kolada":
-        return await fetch_kolada(client, indicator)
+        return await fetch_kolada(
+            client,
+            indicator,
+        )
 
     if source in {
         "arbetsformedlingen",
@@ -286,64 +533,130 @@ async def fetch_indicator(
         "af",
     }:
         raise NotImplementedError(
-            "Arbetsförmedlingen saknar öppet kommun-API; "
+            "Arbetsförmedlingen saknar "
+            "öppet kommun-API; "
             "indikatorn hoppas över."
         )
 
-    raise ValueError(f"Okänd datakälla: {indicator.source}")
+    raise ValueError(
+        "Okänd datakälla: "
+        f"{indicator.source}"
+    )
 
 
 def chunks(
-    items: list[dict[str, Any]],
+    items: list[
+        dict[str, Any]
+    ],
     size: int = PAGE_SIZE,
-):
-    for index in range(0, len(items), size):
-        yield items[index:index + size]
+) -> Iterator[
+    list[dict[str, Any]]
+]:
+    """Dela upp Supabase-upsert i mindre omgångar."""
+
+    for index in range(
+        0,
+        len(items),
+        size,
+    ):
+        yield items[
+            index : index + size
+        ]
 
 
 async def main() -> None:
+    """Kör samtliga aktiva indikatorer."""
+
+    supabase_url = os.environ[
+        "SUPABASE_URL"
+    ]
+
+    service_role_key = os.environ[
+        "SUPABASE_SERVICE_ROLE_KEY"
+    ]
+
     supabase = create_client(
-        os.environ["SUPABASE_URL"],
-        os.environ["SUPABASE_SERVICE_ROLE_KEY"],
+        supabase_url,
+        service_role_key,
     )
 
-    config_rows = (
-        supabase.table("indicator_config")
+    config_response = (
+        supabase
+        .table("indicator_config")
         .select("*")
         .eq("active", True)
         .execute()
-        .data
+    )
+
+    config_rows = (
+        config_response.data
         or []
     )
 
     indicators = [
         Indicator(
-            row["short_name"],
-            row.get("description", ""),
-            row["source"],
-            row.get("unit", ""),
-            row["source_identifier"],
-            row.get("source_filter"),
+            short_name=
+                row["short_name"],
+
+            description=
+                row.get(
+                    "description",
+                    "",
+                ),
+
+            source=
+                row["source"],
+
+            unit=
+                row.get(
+                    "unit",
+                    "",
+                ),
+
+            source_identifier=
+                row["source_identifier"],
+
+            source_filter=
+                row.get(
+                    "source_filter"
+                ),
         )
         for row in config_rows
     ]
 
     LOG.info(
-        "Startar pipeline för %s aktiva indikatorer",
+        "Startar pipeline för "
+        "%s aktiva indikatorer",
         len(indicators),
     )
 
-    async with httpx.AsyncClient() as client:
+    async with (
+        httpx.AsyncClient()
+        as client
+    ):
         for indicator in indicators:
             try:
-                normalized_rows = await fetch_indicator(
-                    client,
-                    indicator,
+                normalized_rows = (
+                    await fetch_indicator(
+                        client,
+                        indicator,
+                    )
                 )
 
-                for batch in chunks(normalized_rows):
+                if not normalized_rows:
+                    raise ValueError(
+                        "Datakällan returnerade "
+                        "inga användbara rader"
+                    )
+
+                for batch in chunks(
+                    normalized_rows
+                ):
                     (
-                        supabase.table("regional_statistics")
+                        supabase
+                        .table(
+                            "regional_statistics"
+                        )
                         .upsert(
                             batch,
                             on_conflict=(
@@ -362,15 +675,15 @@ async def main() -> None:
                     indicator.short_name,
                     len(normalized_rows),
                 )
+
             except Exception as error:
                 LOG.exception(
-                    "%s misslyckades och hoppas över: %s",
+                    "%s misslyckades och "
+                    "hoppas över: %s",
                     indicator.short_name,
                     error,
                 )
 
 
 if __name__ == "__main__":
-    import asyncio
-
     asyncio.run(main())
