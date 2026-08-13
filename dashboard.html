@@ -1572,56 +1572,59 @@ function lineData() {
           .join('');
     }
 
-    function renderTable(rows) {
-      const sortedRows =
-        [...rows].sort(
-          (a, b) => {
-            if (
-              state.sort.key ===
-              'area'
-            ) {
-              return (
-                state.sort.dir *
-                a.area.localeCompare(
-                  b.area,
-                  'sv'
-                )
-              );
-            }
+function renderTable(rows) {
+  const sortedRows =
+    [...rows].sort(
+      (first, second) => {
+        if (
+          state.sort.key ===
+          'area'
+        ) {
+          return (
+            state.sort.dir *
+            first.area.localeCompare(
+              second.area,
+              'sv'
+            )
+          );
+        }
 
-            return (
-              state.sort.dir *
-              (
-                a.value -
-                b.value
-              )
-            );
-          }
+        return (
+          state.sort.dir *
+          (
+            first.value -
+            second.value
+          )
         );
+      }
+    );
 
-      $('dataBody').innerHTML =
-        sortedRows
-          .map(row =>
-            `<tr>` +
+  $('dataBody').innerHTML =
+    sortedRows
+      .map(row => {
+        const unit =
+          row.unit ||
+          state.indicator.unit ||
+          '';
+
+        return (
+          `<tr>` +
             `<td>${row.area}</td>` +
             `<td>` +
-            `${formatValue(row.value)} ` +
-            `${
-              row.unit ||
-              state.indicator.unit
-            }` +
+              `${formatValue(row.value)} ` +
+              `${unit}` +
             `</td>` +
             `<td>${row.source}</td>` +
             `<td>` +
-            '<span class="muted">' +
-            'Riktig data' +
-            '</span>'
+              `<span class="muted">` +
+                `Riktig data` +
+              `</span>` +
             `</td>` +
-            `</tr>`
-          )
-          .join('');
-    }
-
+          `</tr>`
+        );
+      })
+      .join('');
+}
     function render() {
       renderAreas();
 
@@ -1649,7 +1652,7 @@ function lineData() {
       renderTable(rows);
     }
 
-    function formatValue(value) {
+    function formatValue(row.value) {
       return Number(
         value || 0
       ).toLocaleString(
