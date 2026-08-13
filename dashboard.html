@@ -401,14 +401,6 @@
         </div>
 
         <div
-          id="placeholderNotice"
-          class="notice hidden"
-        >
-          Stockholm och Skåne visas som tydlig platshållardata.
-          VG beräknas som enkelt medelvärde av valda kommunvärden.
-        </div>
-
-        <div
           id="lineNotice"
           class="notice hidden"
         ></div>
@@ -781,64 +773,41 @@
       );
     }
 
-    function areaRows() {
-      const rows = currentRows();
+function areaRows() {
+  const rows = currentRows();
 
-      if (state.level === 'county') {
-        const values = rows.map(
-          row => Number(row.value)
-        );
-
-        const average =
-          values.reduce(
-            (sum, value) =>
-              sum + value,
-            0
-          ) /
-          (values.length || 1);
-
-        return COUNTIES
-          .filter(county =>
-            state.selected.has(
-              county.code
-            )
-          )
-          .map((county, index) => ({
-            code:county.code,
-            area:county.name,
-            value:
-              index === 0
-                ? average
-                : average * (
-                    index === 1
-                      ? 1.08
-                      : .92
-                  ),
-            source:
-              index === 0
-                ? 'Beräknat från kommuner'
-                : 'Platshållare',
-            placeholder:index !== 0,
-            unit:state.indicator.unit
-          }));
-      }
-
-      return rows
-        .filter(row =>
-          state.selected.has(
-            row.municipality_code
+  const allowedAreas =
+    state.level === 'county'
+      ? new Set(
+          COUNTIES.map(
+            county => county.code
           )
         )
-        .map(row => ({
-          code:row.municipality_code,
-          area:row.municipality_name,
-          value:Number(row.value),
-          source:row.source,
-          placeholder:false,
-          unit:row.unit
-        }));
-    }
+      : new Set(
+          VG.map(
+            municipality =>
+              municipality.code
+          )
+        );
 
+  return rows
+    .filter(row =>
+      allowedAreas.has(
+        row.municipality_code
+      ) &&
+      state.selected.has(
+        row.municipality_code
+      )
+    )
+    .map(row => ({
+  code:row.municipality_code,
+  area:row.municipality_name,
+  value:Number(row.value),
+  source:row.source,
+  unit:row.unit
+}));
+}
+    
     function renderAreas() {
       const list =
         state.level === 'county'
@@ -885,72 +854,102 @@
         });
     }
 
-    function setLevel(level) {
-      state.level = level;
+function setLevel(level) {
+  state.level = level;
 
-      state.selected = new Set(
-        (
-          level === 'county'
-            ? COUNTIES
-            : VG
-        ).map(area => area.code)
+  const areas =
+    level === 'county'
+      ? COUNTIES
+      : VG;
+
+  state.selected = new Set(
+    areas.map(
+      area => area.code
+    )
+  );
+
+  $('municipalityBtn')
+    .classList.toggle(
+      'active',
+      level === 'municipality'
+    );
+
+  $('countyBtn')
+    .classList.toggle(
+      'active',
+      level === 'county'
+    );
+
+  const countyView =
+    level === 'county';
+
+  $('mapBtn').disabled =
+    countyView;
+
+  $('mapTab').disabled =
+    countyView;
+
+  if (
+    countyView &&
+    state.viz === 'map'
+  ) {
+    state.viz = 'bar';
+  }
+
+  [
+    'map',
+    'bar',
+    'line'
+  ].forEach(name => {
+    $(name + 'Btn')
+      ?.classList.toggle(
+        'active',
+        name === state.viz
       );
 
-      $('municipalityBtn')
-        .classList.toggle(
-          'active',
-          level === 'municipality'
-        );
+    $(name + 'Tab')
+      ?.classList.toggle(
+        'active',
+        name === state.viz
+      );
+  });
 
-      $('countyBtn')
-        .classList.toggle(
-          'active',
-          level === 'county'
-        );
+  renderAreas();
+  render();
+}
 
-      $('mapBtn').disabled =
-        level === 'county';
+function setViz(
+  visualization
+) {
+  if (
+    state.level === 'county' &&
+    visualization === 'map'
+  ) {
+    return;
+  }
 
-      if (
-        level === 'county' &&
-        state.viz === 'map'
-      ) {
-        state.viz = 'bar';
-      }
+  state.viz = visualization;
 
-      $('placeholderNotice')
-        .classList.toggle(
-          'hidden',
-          level !== 'county'
-        );
+  [
+    'map',
+    'bar',
+    'line'
+  ].forEach(name => {
+    $(name + 'Btn')
+      ?.classList.toggle(
+        'active',
+        name === visualization
+      );
 
-      renderAreas();
-      render();
-    }
+    $(name + 'Tab')
+      ?.classList.toggle(
+        'active',
+        name === visualization
+      );
+  });
 
-    function setViz(visualization) {
-      state.viz = visualization;
-
-      [
-        'map',
-        'bar',
-        'line'
-      ].forEach(name => {
-        $(name + 'Btn')
-          ?.classList.toggle(
-            'active',
-            name === visualization
-          );
-
-        $(name + 'Tab')
-          ?.classList.toggle(
-            'active',
-            name === visualization
-          );
-      });
-
-      render();
-    }
+  render();
+}
 
     function color(
       value,
@@ -1201,208 +1200,218 @@
       };
     }
 
-    function lineData() {
-      const years =
-        unique('year').sort(
-          (a, b) => a - b
-        );
+function lineData() {
+  const years = unique('year')
+    .sort(
+      (a, b) => a - b
+    );
 
-      if (state.level === 'county') {
-        const counties =
-          COUNTIES.filter(county =>
-            state.selected.has(
-              county.code
-            )
-          );
+  const selectedSex =
+    $('sexSelect').value;
 
-        $('lineNotice')
-          .classList.add('hidden');
+  const selectedIndustry =
+    $('industrySelect').value;
 
-        return {
-          type:'line',
-
-          data:{
-            labels:years,
-
-            datasets:counties.map(
-              (county, index) => ({
-                label:county.name,
-
-                data:years.map(year => {
-                  const values =
-                    state.rows
-                      .filter(row =>
-                        String(row.year) ===
-                        String(year)
-                      )
-                      .map(row =>
-                        Number(row.value)
-                      );
-
-                  const average =
-                    values.reduce(
-                      (sum, value) =>
-                        sum + value,
-                      0
-                    ) /
-                    (values.length || 1);
-
-                  if (index === 0) {
-                    return average;
-                  }
-
-                  return average * (
-                    index === 1
-                      ? 1.08
-                      : .92
-                  );
-                }),
-
-                borderColor:[
-                  '#003d6b',
-                  '#e8501a',
-                  '#007b8a'
-                ][index],
-
-                borderDash:
-                  index === 0
-                    ? []
-                    : [6, 4],
-
-                tension:.25
-              })
-            )
-          },
-
-          options:{
-            maintainAspectRatio:false,
-
-            plugins:{
-              legend:{
-                position:'bottom'
-              }
-            }
-          }
-        };
-      }
-
-      const selectedSex =
-        $('sexSelect').value;
-
-      const selectedIndustry =
-        $('industrySelect').value;
-
-      const allRows =
-        state.rows.filter(row =>
+  if (state.level === 'county') {
+    const selectedCounties =
+      COUNTIES.filter(
+        county =>
           state.selected.has(
-            row.municipality_code
-          ) &&
-          (
-            !selectedSex ||
-            row.sex === selectedSex
-          ) &&
-          (
-            !selectedIndustry ||
-            row.industry ===
-              selectedIndustry
+            county.code
           )
-        );
+      );
 
-      const latest =
-        areaRows().sort(
-          (a, b) =>
-            b.value - a.value
-        );
+    $('lineNotice')
+      .classList.add('hidden');
 
-      const limited =
-        latest.length > 10;
+    const countyColors = [
+      '#003d6b',
+      '#e8501a',
+      '#007b8a'
+    ];
 
-      const areaCodes = (
-        limited
-          ? latest.slice(0, 10)
-          : latest
-      ).map(row => row.code);
+    return {
+      type:'line',
 
-      $('lineNotice')
-        .classList.toggle(
-          'hidden',
-          !limited
-        );
+      data:{
+        labels:years,
 
-      $('lineNotice').textContent =
-        'Fler än tio kommuner valda: ' +
-        'linjediagrammet visar de tio ' +
-        'med högst senaste värde för ' +
-        'läsbarhet.';
+        datasets:
+          selectedCounties.map(
+            (county, index) => ({
+              label:county.name,
 
-      const colors = [
-        '#003d6b',
-        '#007b8a',
-        '#e8501a',
-        '#7c3aed',
-        '#16a34a',
-        '#dc2626',
-        '#0891b2',
-        '#ca8a04',
-        '#be185d',
-        '#475569'
-      ];
-
-      return {
-        type:'line',
-
-        data:{
-          labels:years,
-
-          datasets:areaCodes.map(
-            (code, index) => {
-              const area = VG.find(
-                municipality =>
-                  municipality.code ===
-                  code
-              );
-
-              return {
-                label:
-                  area
-                    ? area.name
-                    : code,
-
-                data:years.map(year => {
+              data:years.map(
+                year => {
                   const row =
-                    allRows.find(item =>
-                      item.municipality_code ===
-                        code &&
-                      String(item.year) ===
-                        String(year)
+                    state.rows.find(
+                      item =>
+                        item.municipality_code ===
+                          county.code &&
+                        String(item.year) ===
+                          String(year) &&
+                        (
+                          !selectedSex ||
+                          item.sex ===
+                            selectedSex
+                        ) &&
+                        (
+                          !selectedIndustry ||
+                          item.industry ===
+                            selectedIndustry
+                        )
                     );
 
                   return row
                     ? Number(row.value)
                     : null;
-                }),
+                }
+              ),
 
-                borderColor:
-                  colors[index],
+              borderColor:
+                countyColors[index],
 
-                tension:.25
-              };
-            }
+              backgroundColor:
+                countyColors[index],
+
+              tension:.25
+            })
           )
-        },
+      },
 
-        options:{
-          maintainAspectRatio:false,
+      options:{
+        maintainAspectRatio:false,
 
-          plugins:{
-            legend:{
-              position:'bottom'
-            }
+        plugins:{
+          legend:{
+            position:'bottom'
           }
         }
-      };
-    }
+      }
+    };
+  }
 
+  const allRows =
+    state.rows.filter(
+      row =>
+        state.selected.has(
+          row.municipality_code
+        ) &&
+        (
+          !selectedSex ||
+          row.sex === selectedSex
+        ) &&
+        (
+          !selectedIndustry ||
+          row.industry ===
+            selectedIndustry
+        )
+    );
+
+  const latest =
+    areaRows().sort(
+      (a, b) =>
+        b.value - a.value
+    );
+
+  const limited =
+    latest.length > 10;
+
+  const areaCodes = (
+    limited
+      ? latest.slice(0, 10)
+      : latest
+  ).map(
+    row => row.code
+  );
+
+  $('lineNotice')
+    .classList.toggle(
+      'hidden',
+      !limited
+    );
+
+  $('lineNotice').textContent =
+    'Fler än tio kommuner valda: ' +
+    'linjediagrammet visar de tio ' +
+    'med högst senaste värde för ' +
+    'läsbarhet.';
+
+  const colors = [
+    '#003d6b',
+    '#007b8a',
+    '#e8501a',
+    '#7c3aed',
+    '#16a34a',
+    '#dc2626',
+    '#0891b2',
+    '#ca8a04',
+    '#be185d',
+    '#475569'
+  ];
+
+  return {
+    type:'line',
+
+    data:{
+      labels:years,
+
+      datasets:
+        areaCodes.map(
+          (code, index) => {
+            const area =
+              VG.find(
+                municipality =>
+                  municipality.code ===
+                    code
+              );
+
+            return {
+              label:
+                area
+                  ? area.name
+                  : code,
+
+              data:years.map(
+                year => {
+                  const row =
+                    allRows.find(
+                      item =>
+                        item.municipality_code ===
+                          code &&
+                        String(item.year) ===
+                          String(year)
+                    );
+
+                  return row
+                    ? Number(row.value)
+                    : null;
+                }
+              ),
+
+              borderColor:
+                colors[index],
+
+              backgroundColor:
+                colors[index],
+
+              tension:.25
+            };
+          }
+        )
+    },
+
+    options:{
+      maintainAspectRatio:false,
+
+      plugins:{
+        legend:{
+          position:'bottom'
+        }
+      }
+    }
+  };
+}
     function median(values) {
       const sorted =
         [...values].sort(
@@ -1604,15 +1613,9 @@
             `</td>` +
             `<td>${row.source}</td>` +
             `<td>` +
-            (
-              row.placeholder
-                ? '<span class="placeholder">' +
-                  'Preliminär platshållare' +
-                  '</span>'
-                : '<span class="muted">' +
-                  'Riktig data' +
-                  '</span>'
-            ) +
+            '<span class="muted">' +
+            'Riktig data' +
+            '</span>'
             `</td>` +
             `</tr>`
           )
