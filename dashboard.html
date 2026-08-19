@@ -569,13 +569,23 @@
     }
 
     function headers(extra = {}) {
-      return {
-        ...extra,
-        apikey:SUPABASE_ANON_KEY,
-        Authorization:
-          'Bearer ' + SUPABASE_ANON_KEY
-      };
-    }
+  const requestHeaders = {
+    ...extra,
+    apikey:SUPABASE_ANON_KEY
+  };
+
+  // Supabase publishable keys authenticate with apikey only.
+  // Keep Authorization for legacy JWT-based anon keys.
+  if (
+    SUPABASE_ANON_KEY.startsWith('eyJ') &&
+    SUPABASE_ANON_KEY.split('.').length === 3
+  ) {
+    requestHeaders.Authorization =
+      'Bearer ' + SUPABASE_ANON_KEY;
+  }
+
+  return requestHeaders;
+}
 
     async function supabaseAll(
       table,
